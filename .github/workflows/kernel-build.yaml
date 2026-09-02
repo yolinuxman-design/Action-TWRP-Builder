@@ -6,15 +6,15 @@ on:
       kernel_repo:
         description: 'Kernel source URL'
         required: true
-        default: 'https://github.com/LineageOS/android_kernel_samsung_exynos7870'
+        default: 'https://github.com/samsungexynos7870/android_kernel_samsung_exynos7870'
       kernel_branch:
         description: 'Kernel branch'
         required: true
-        default: 'lineage-16.0'
+        default: 'master'
       defconfig:
-        description: 'Defconfig name'
+        description: 'Defconfig name (use exynos7870-a6lte_defconfig as base)'
         required: true
-        default: 'exynos7870-a2corelte_defconfig'
+        default: 'exynos7870-a6lte_defconfig'
 
 jobs:
   build:
@@ -25,6 +25,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache curl flex \
             g++-multilib gcc-multilib git gnupg gperf imagemagick \
@@ -47,16 +48,31 @@ jobs:
           git clone --depth=1 -b ${{ github.event.inputs.kernel_branch }} \
             ${{ github.event.inputs.kernel_repo }} ~/kernel
 
-      - name: Apply FIPS disable & crypto fixes
+      - name: Prepare defconfig
         run: |
           cd ~/kernel
-          DEFCONFIG=arch/arm64/configs/${{ github.event.inputs.defconfig }}
+          BASE_DEFCONFIG=${{ github.event.inputs.defconfig }}
+          A2_DEFCONFIG="exynos7870-a2corelte_defconfig"
+          CONFIG_DIR="arch/arm64/configs"
 
-          if [ ! -f "$DEFCONFIG" ]; then
-            echo "::error::Defconfig not found: $DEFCONFIG"
-            ls arch/arm64/configs/
+          echo "::group::Available defconfigs"
+          ls -1 $CONFIG_DIR/
+          echo "::endgroup::"
+
+          if [ ! -f "$CONFIG_DIR/$BASE_DEFCONFIG" ]; then
+            echo "::error::Defconfig not found: $CONFIG_DIR/$BASE_DEFCONFIG"
             exit 1
           fi
+
+          # Create a2corelte defconfig from a6lte if it doesn't exist
+          if [ "$BASE_DEFCONFIG" = "$A2_DEFCONFIG" ]; then
+            echo "Using existing $A2_DEFCONFIG"
+          elif [ ! -f "$CONFIG_DIR/$A2_DEFCONFIG" ]; then
+            echo "Creating $A2_DEFCONFIG from $BASE_DEFCONFIG"
+            cp "$CONFIG_DIR/$BASE_DEFCONFIG" "$CONFIG_DIR/$A2_DEFCONFIG"
+          fi
+
+          DEFCONFIG="$CONFIG_DIR/$A2_DEFCONFIG"
 
           # Disable FIPS
           sed -i 's/CONFIG_EXYNOS_FIPS_ENABLE=y/CONFIG_EXYNOS_FIPS_ENABLE=n/g' "$DEFCONFIG"
@@ -70,8 +86,8 @@ jobs:
           for cfg in CONFIG_BLK_DEV_DM CONFIG_DM_CRYPT CONFIG_CRYPTO_AES \
                      CONFIG_CRYPTO_XTS CONFIG_CRYPTO_SHA256 CONFIG_CRYPTO_ECB \
                      CONFIG_CRYPTO_CBC CONFIG_CRYPTO_USER_API_SKCIPHER; do
-            sed -i "/^$cfg=/d"          "$DEFCONFIG"
-            sed -i "/^# $cfg is not set/d" "$DEFCONFIG"
+            sed -i "/^$cfg=/d"               "$DEFCONFIG"
+            sed -i "/^# $cfg is not set/d"    "$DEFCONFIG"
             echo "$cfg=y" >> "$DEFCONFIG"
           done
 
@@ -88,8 +104,8 @@ jobs:
             sed -i 's/fips140_2_init();//g' crypto/api.c
           fi
 
-          echo "::group::Final crypto lines in defconfig"
-          grep -E "FIPS|DM_CRYPT|DM_|CRYPTO_AES|CRYPTO_XTS" "$DEFCONFIG" || true
+          echo "::group::Final crypto/FIPS lines in defconfig"
+          grep -E "FIPS|DM_CRYPT|DM_|CRYPTO_AES|CRYPTO_XTS|CRYPTO_SHA256" "$DEFCONFIG" || true
           echo "::endgroup::"
 
       - name: Build kernel
@@ -98,7 +114,7 @@ jobs:
           export CROSS_COMPILE=$HOME/toolchains/aarch64-linux-android-4.9/bin/aarch64-linux-android-
           export PATH="/usr/lib/ccache:$PATH"
 
-          make ${{ github.event.inputs.defconfig }}
+          make exynos7870-a2corelte_defconfig
           make -j$(nproc) Image Image.gz dtbs
 
           echo "::group::Build outputs"
@@ -111,9 +127,8 @@ jobs:
           cd ~/kernel/arch/arm64/boot
           cp Image Image.gz ~/artifacts/ 2>/dev/null || true
           cp *.dtb ~/artifacts/ 2>/dev/null || true
-          # dtbo.img is not always built by 3.18; copy if present
           cp dtbo.img ~/artifacts/ 2>/dev/null || true
-          cp ~/kernel/arch/arm64/configs/${{ github.event.inputs.defconfig }} \
+          cp ~/kernel/arch/arm64/configs/exynos7870-a2corelte_defconfig \
              ~/artifacts/defconfig-used
 
       - name: Upload artifacts
@@ -129,7 +144,8 @@ jobs:
           echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Source | ${{ github.event.inputs.kernel_repo }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ github.event.inputs.kernel_branch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Defconfig | ${{ github.event.inputs.defconfig }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base defconfig | ${{ github.event.inputs.defconfig }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Used defconfig | exynos7870-a2corelte_defconfig |" >> $GITHUB_STEP_SUMMARY
           echo "| FIPS | Disabled |" >> $GITHUB_STEP_SUMMARY
           echo "| dm-crypt | Enabled |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

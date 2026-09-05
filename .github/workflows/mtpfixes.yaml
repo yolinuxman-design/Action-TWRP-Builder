@@ -142,11 +142,12 @@ jobs:
         sudo ln -s /usr/bin/python2 /usr/bin/python
       continue-on-error: true
 
-    - name: Apply MTP patch
+        - name: Apply MTP patch
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/bootable/recovery
+        sed -i 's/\r$//' ${{ steps.pwd.outputs.workspace-folder }}/device/samsung/a2corelte/patches/0001-Fix-MTP.patch
         patch -p1 < ${{ steps.pwd.outputs.workspace-folder }}/device/samsung/a2corelte/patches/0001-Fix-MTP.patch
-
+        
     - name: Build Recovery
       run: |
         source build/envsetup.sh
